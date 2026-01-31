@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>GYRTALE: Kaosun Zinciri</title>
+    <style>
+        :root { --bg: #020204; --neon: #8a2be2; --gold: #ffd700; --blood: #ff0033; --mist: #2c2c2c; }
+        body { background: var(--bg); color: #ccc; font-family: 'Consolas', monospace; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        #game-box { width: 1000px; height: 600px; background: #08080c; border: 1px solid #1a1a1a; display: grid; grid-template-columns: 260px 1fr; position: relative; box-shadow: 0 0 50px #000; }
+        .sidebar { background: #050508; padding: 20px; border-right: 1px solid #1a1a1a; display: flex; flex-direction: column; }
+        .main { padding: 40px; display: flex; flex-direction: column; position: relative; }
+        #story-display { flex-grow: 1; font-size: 19px; line-height: 1.7; display: flex; align-items: center; justify-content: center; text-align: center; color: #b0a8c5; transition: 0.3s; }
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        button { background: #121216; color: var(--neon); border: 1px solid #2d2d35; padding: 15px; cursor: pointer; transition: 0.2s; font-family: inherit; }
+        button:hover { background: var(--neon); color: white; border-color: white; transform: scale(1.02); }
+        .stat-box { font-size: 13px; margin-bottom: 20px; }
+        #boss-warning { position: absolute; top: 10px; right: 20px; color: var(--blood); font-weight: bold; font-size: 12px; display: none; }
+        #conscience { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); color: var(--blood); font-style: italic; opacity: 0; transition: 1s; }
+    </style>
+</head>
+<body>
+
+<div id="game-box">
+    <div id="conscience">"Bunu unutmayacaklar..."</div>
+    <div class="sidebar">
+        <h2 style="color:var(--neon); margin-bottom:30px; letter-spacing:2px;">GYRTALE</h2>
+        <div class="stat-box">❤️ Can: <span id="val-hp">100</span></div>
+        <div class="stat-box">💰 Altın: <span id="val-gold">50</span></div>
+        <div class="stat-box">👣 Adım: <span id="val-steps">0</span>/10</div>
+        <div class="stat-box">💠 Karma: <span id="val-karma">50</span></div>
+        <div style="margin-top:auto;">
+            <strong style="font-size:11px;">🎒 ENVANTER:</strong>
+            <div id="val-inv" style="font-size:11px; color:var(--gold); margin-top:5px;">Boş</div>
+        </div>
+    </div>
+
+    <div class="main">
+        <div id="boss-warning">⚠️ GÖLGE YAKLAŞIYOR</div>
+        <div id="story-display">Yolculuk başlıyor... Kim olduğunu seç.</div>
+        <div id="btn-area" class="btn-grid"></div>
+    </div>
+</div>
+
+<script>
+const G = {
+    s: { hp: 100, gold: 50, steps: 0, karma: 50, inv: [], class: "", history: [] },
+    
+    // DEV OLAY HAVUZU (Her biri farklı mekanik tetikler)
+    pool: [
+        {
+            id: 1, txt: "Yol kenarında terk edilmiş bir kervan buldun. Kapıları hala kilitli.",
+            opts: [
+                { t: "Kapıyı Kır (-10 HP, +40G)", karma: -10, eff: () => { G.s.hp -= 10; G.s.gold += 40; } },
+                { t: "Dua Et ve Geç", karma: 5, eff: () => {} }
+            ]
+        },
+        {
+            id: 2, txt: "Siyah bir kedi sana bakıyor. Ağzında gümüş bir kolye var.",
+            opts: [
+                { t: "Kolyeyi Al (-Karma)", karma: -15, eff: () => G.addInv("Gümüş Kolye") },
+                { t: "Kediyi Besle (-10G)", karma: 15, eff: () => G.s.gold -= 10 }
+            ]
+        },
+        {
+            id: 3, txt: "Toza dönüşen bir adam yolunu kesti. Sana felsefi bir soru soruyor: 'Beden mi ruh mu?'",
+            opts: [
+                { t: "Beden (Güç)", karma: 0, eff: () => { G.s.hp += 20; } },
+                { t: "Ruh (Karma)", karma: 10, eff: () => { G.s.karma += 20; } }
+            ]
+        },
+        {
+            id: 4, txt: "Bir han gördün ama kapısında 'Sadece Günahkarlar Girebilir' yazıyor.",
+            opts: [
+                { t: "Yalan Söyle ve Gir", req: () => G.s.karma < 40, eff: () => { G.s.hp = 100; G.s.gold += 10; } },
+                { t: "Uzaklaş", karma: 5, eff: () => {} }
+            ]
+        },
+        {
+            id: 5, txt: "Bir kuyu buldun. İçinden garip sesler geliyor.",
+            opts: [
+                { t: "Aşağı Taş At", karma: -5, eff: () => { G.s.gold += 5; } },
+                { t: "Su İç (Şifa)", karma: 0, eff: () => { G.s.hp = Math.min(100, G.s.hp + 15); } }
+            ]
+        }
+    ],
+
+    init() {
+        this.render([
+            { t: "Gölge Savaşçısı", a: () => { G.s.class="Savaşçı"; G.nextStep(); }},
+            { t: "Sis Hırsızı", a: () => { G.s.class="Hırsız"; G.nextStep(); }}
+        ]);
+    },
+
+    nextStep() {
+        this.updateUI();
+        this.s.steps++;
+        
+        // BOSS SİSTEMİ: 10 ADIMDA BİR
+        if(this.s.steps >= 10) {
+            this.triggerBoss();
+            return;
+        }
+
+        if(this.s.steps > 7) document.getElementById("boss-warning").style.display = "block";
+
+        // TEKRARLAMAYAN RASTGELE OLAY MOTORU
+        let available = this.pool.filter(ev => !this.s.history.includes(ev.id));
+        if(available.length === 0) { this.s.history = []; available = this.pool; } // Hafıza dolunca sıfırla
+        
+        const ev = available[Math.floor(Math.random() * available.length)];
+        this.s.history.push(ev.id);
+        
+        document.getElementById("story-display").innerText = ev.txt;
+        
+        const btns = ev.opts.map(o => ({
+            t: o.t,
+            a: () => {
+                if(o.req && !o.req()) { alert("Buna uygun değilsin!"); return; }
+                if(o.karma < 0) this.whisper();
+                o.eff();
+                this.s.karma += o.karma || 0;
+                this.nextStep();
+            }
+        }));
+        this.render(btns);
+    },
+
+    triggerBoss() {
+        document.getElementById("boss-warning").style.display = "none";
+        document.getElementById("story-display").innerHTML = "<span style='color:red'>GÖLGE KOPYAN BELİRDİ!</span><br>Seninle aynı güçte ama hiç vicdanı yok.";
+        this.render([
+            { t: "Savaş (Zar At)", a: () => {
+                let power = (G.s.class === "Savaşçı" ? 60 : 40) + (G.s.inv.length * 10);
+                if(Math.random() * 100 < power) {
+                    alert("Kazandın! Gyrtale seni kutsuyor.");
+                    G.s.steps = 0; G.s.gold += 100; G.nextStep();
+                } else {
+                    G.s.hp -= 50;
+                    alert("Ağır yaralandın ve kaçtın.");
+                    G.s.steps = 0; G.nextStep();
+                }
+            }}
+        ]);
+    },
+
+    whisper() {
+        const c = document.getElementById("conscience");
+        c.style.opacity = 1;
+        setTimeout(() => c.style.opacity = 0, 2500);
+    },
+
+    addInv(item) { this.s.inv.push(item); alert(item + " envantere eklendi!"); },
+
+    render(opts) {
+        const area = document.getElementById("btn-area");
+        area.innerHTML = "";
+        opts.forEach(o => {
+            const b = document.createElement("button");
+            b.innerText = o.t;
+            b.onclick = o.a;
+            area.appendChild(b);
+        });
+    },
+
+    updateUI() {
+        document.getElementById("val-hp").innerText = this.s.hp;
+        document.getElementById("val-gold").innerText = this.s.gold;
+        document.getElementById("val-steps").innerText = this.s.steps;
+        document.getElementById("val-karma").innerText = this.s.karma;
+        document.getElementById("val-inv").innerText = this.s.inv.join(", ") || "Boş";
+        if(this.s.hp <= 0) { alert("Yenildin..."); location.reload(); }
+    }
+};
+
+window.onload = () => G.init();
+</script>
+</body>
+</html>
